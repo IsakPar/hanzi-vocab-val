@@ -385,6 +385,45 @@ async def recommend_content(request: RecommendRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════
+# TEST SEEDING (for pipeline testing)
+# ═══════════════════════════════════════════════════════════
+
+class SeedTestCurriculumRequest(BaseModel):
+    """Request to seed test curriculum"""
+    words: dict  # {"你好": "hsk1-l1", "学习": "hsk1-l3", ...}
+
+
+@app.post("/seed-test-curriculum")
+async def seed_test_curriculum(request: SeedTestCurriculumRequest):
+    """
+    Seed the validator with test curriculum data.
+    This is for pipeline testing only - NOT for production.
+    
+    Accepts a dict of {word: position} and loads it directly
+    into the validator without persisting to disk.
+    """
+    import jieba
+    
+    # Load directly into validator memory
+    validator.curriculum = request.words
+    validator.version = "test-seed"
+    validator.loaded = True
+    
+    # Add all words to jieba for proper segmentation
+    for word in validator.curriculum.keys():
+        jieba.add_word(word, freq=1000)
+    
+    logger.info(f"Test curriculum seeded: {len(request.words)} words")
+    
+    return {
+        "success": True,
+        "word_count": len(request.words),
+        "version": "test-seed",
+        "sample_words": list(request.words.items())[:5]
+    }
+
+
 @app.post("/sync/full", dependencies=[Depends(verify_api_key)])
 async def sync_all_content():
     """
