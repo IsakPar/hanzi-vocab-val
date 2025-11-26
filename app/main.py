@@ -33,21 +33,20 @@ DATA_DIR = os.getenv("DATA_DIR", "./data")
 API_KEY = os.getenv("VALIDATOR_API_KEY", "")  # Required for /sync
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
-# Allowed origins - locked down for production
+# Allowed origins - backend + portal + localhost
 ALLOWED_ORIGINS = [
     BACKEND_URL,
     "https://hanzimaster-backend-v2.isak-parild.workers.dev",
+    # Portal URLs
+    "https://hanzimaster-portal.pages.dev",
+    "https://hanzimaster-portal-v2.pages.dev",
+    # Localhost for development
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8787",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
 ]
-
-# Add localhost for development
-if ENVIRONMENT == "development":
-    ALLOWED_ORIGINS.extend([
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8787",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ])
 
 # Configure logging
 logging.basicConfig(
