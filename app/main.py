@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 
 from .validator import VocabValidator
 from .sync import CurriculumSync
+from .recommender import ContentRecommender
+from .models import RecommendRequest, RecommendResponse
 
 load_dotenv()
 
@@ -60,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 sync = CurriculumSync(backend_url=BACKEND_URL, data_dir=DATA_DIR)
 validator = VocabValidator(data_dir=DATA_DIR)
+recommender = ContentRecommender(data_dir=DATA_DIR)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -74,6 +77,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Backend URL: {BACKEND_URL}")
     logger.info(f"Data directory: {DATA_DIR}")
     
+    # Load validator
     try:
         validator.load()
         logger.info(f"✓ Curriculum loaded: {validator.get_curriculum_info()['word_count']} words")
@@ -91,6 +95,28 @@ async def lifespan(app: FastAPI):
             logger.warning("Service starting without curriculum - POST /sync to initialize")
     except Exception as e:
         logger.error(f"Failed to load curriculum: {e}")
+    
+    # Load recommender
+    try:
+        recommender.load()
+        info = recommender.get_info()
+        logger.info(
+            f"✓ Recommender loaded: {info['story_count']} stories, "
+            f"{info['audiobook_count']} audiobooks"
+        )
+    except FileNotFoundError:
+        logger.warning("No content cache found - attempting auto-sync...")
+        try:
+            result = await sync.sync_full()
+            if result["success"] and result["changed"]:
+                recommender.load()
+                logger.info(f"✓ Content auto-sync successful")
+            else:
+                logger.info("No content available - recommender will be unavailable")
+        except Exception as e:
+            logger.error(f"Content auto-sync error: {e}")
+    except Exception as e:
+        logger.error(f"Failed to load recommender: {e}")
     
     yield
     
@@ -250,8 +276,70 @@ async def sync_curriculum():
 async def get_version():
     """Get current curriculum version - public"""
     curriculum = validator.get_curriculum_info()
+    rec_info = recommender.get_info()
     return {
         "version": curriculum["version"],
         "word_count": curriculum["word_count"],
-        "loaded": curriculum["loaded"]
+        "loaded": curriculum["loaded"],
+        "recommender": {
+            "loaded": rec_info["loaded"],
+            "story_count": rec_info["story_count"],
+            "audiobook_count": rec_info["audiobook_count"],
+        }
     }
+
+
+@app.post("/recommend", response_model=RecommendResponse)
+async def recommend_content(request: RecommendRequest):
+    """
+    Get tiered content recommendations based on user's lesson position.
+    
+    Returns content in 3 tiers:
+    - 🟢 Comfort Zone (95%+): Build confidence
+    - 🟡 Sweet Spot (85-94%): Optimal learning
+    - 🔴 Stretch Goal (75-84%): Ambitious with support
+    
+    Content below 75% comprehension is excluded.
+    """
+    if not recommender.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Recommender not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        result = recommender.recommend(
+            lesson_id=request.lesson_id,
+            content_type=request.content_type,
+            items_per_tier=request.items_per_tier,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Recommendation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/full", dependencies=[Depends(verify_api_key)])
+async def sync_all_content():
+    """
+    Sync both curriculum and full content from backend.
+    
+    PROTECTED: Requires X-API-Key header.
+    Use this to update both validator and recommender data.
+    """
+    logger.info("Full sync requested")
+    try:
+        result = await sync.sync_all()
+        
+        if result["curriculum"]["changed"]:
+            validator.reload()
+            logger.info("Curriculum reloaded")
+        
+        if result["content"]["changed"]:
+            recommender.reload()
+            logger.info("Recommender reloaded")
+        
+        return result
+    except Exception as e:
+        logger.error(f"Full sync error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
