@@ -61,12 +61,18 @@ class Lesson(BaseModel):
     targetVocabulary: List[str]  # vocab IDs
 
 
+class Token(BaseModel):
+    wordId: Optional[str]
+    hanzi: str
+
+
 class Story(BaseModel):
     id: str
     title: str
     hskLevel: int
     difficulty: str
-    fullText: str
+    tokens: List[Token]  # Pre-tokenized by backend
+    totalTokens: int
     sentenceCount: int
 
 
@@ -75,7 +81,8 @@ class Audiobook(BaseModel):
     title: str
     hskLevel: int
     description: Optional[str]
-    fullText: str
+    tokens: List[Token]  # Pre-tokenized by backend
+    totalTokens: int
 
 
 class FullCurriculum(BaseModel):

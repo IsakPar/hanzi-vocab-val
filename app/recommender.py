@@ -4,11 +4,13 @@ Content Recommendation Engine
 Recommends stories and audiobooks based on user's vocabulary level.
 Uses token-level comprehension (total occurrences, not unique types).
 Returns tiered recommendations: Comfort (95%+), Challenge (85-94%), Stretch (75-84%).
+
+NOTE: Stories are PRE-TOKENIZED by the backend. Sevalla just does math on IDs.
+This ensures consistency (single source of truth for tokenization).
 """
 
 import json
 import os
-import jieba
 import logging
 from typing import Dict, List, Set, Tuple, Optional
 from datetime import datetime
@@ -16,7 +18,7 @@ from datetime import datetime
 from .models import (
     TierName, TIER_CONFIG,
     ContentItem, UnknownWord, TierResult, RecommendResponse,
-    VocabWord, Story, Audiobook
+    VocabWord, Story, Audiobook, Token
 )
 
 logger = logging.getLogger(__name__)
@@ -53,13 +55,11 @@ class ContentRecommender:
         with open(content_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # Load vocabulary
+        # Load vocabulary (for lookup and preview)
         for v in data.get("vocabulary", []):
             vocab = VocabWord(**v)
             self.vocab_by_id[vocab.id] = vocab
             self.vocab_by_hanzi[vocab.hanzi] = vocab.id
-            # Add to jieba for proper segmentation
-            jieba.add_word(vocab.hanzi)
         
         # Load lesson structure
         self.lesson_order = data.get("lessonOrder", [])
@@ -68,31 +68,31 @@ class ContentRecommender:
         # Compute cumulative word sets
         self._build_cumulative_words()
         
-        # Load and tokenize stories
+        # Load stories (PRE-TOKENIZED by backend - no jieba needed!)
         self.stories = []
         for story in data.get("stories", []):
-            tokenized = self._tokenize_content(story["fullText"])
+            tokens = story.get("tokens", [])
             self.stories.append({
                 "id": story["id"],
                 "title": story["title"],
                 "hskLevel": story["hskLevel"],
                 "difficulty": story.get("difficulty", "medium"),
-                "tokens": tokenized,
-                "totalTokens": len(tokenized),
+                "tokens": tokens,
+                "totalTokens": story.get("totalTokens", len(tokens)),
                 "type": "story"
             })
         
-        # Load and tokenize audiobooks
+        # Load audiobooks (PRE-TOKENIZED by backend)
         self.audiobooks = []
         for ab in data.get("audiobooks", []):
-            if ab.get("fullText"):  # Only if has transcript
-                tokenized = self._tokenize_content(ab["fullText"])
+            tokens = ab.get("tokens", [])
+            if tokens:  # Only if has transcript
                 self.audiobooks.append({
                     "id": ab["id"],
                     "title": ab["title"],
                     "hskLevel": ab["hskLevel"],
-                    "tokens": tokenized,
-                    "totalTokens": len(tokenized),
+                    "tokens": tokens,
+                    "totalTokens": ab.get("totalTokens", len(tokens)),
                     "type": "audiobook"
                 })
         
@@ -121,36 +121,6 @@ class ContentRecommender:
         
         logger.info(f"Built cumulative word sets for {len(self.cumulative_words)} lessons")
     
-    def _tokenize_content(self, text: str) -> List[Dict]:
-        """
-        Tokenize Chinese text and map to vocabulary IDs.
-        
-        Returns list of tokens: [{"wordId": "vocab-123" or None, "hanzi": "你好"}, ...]
-        """
-        if not text:
-            return []
-        
-        segments = list(jieba.cut(text))
-        tokens = []
-        
-        for segment in segments:
-            # Skip punctuation and whitespace
-            if self._is_punctuation(segment):
-                continue
-            
-            word_id = self.vocab_by_hanzi.get(segment)
-            tokens.append({
-                "wordId": word_id,
-                "hanzi": segment
-            })
-        
-        return tokens
-    
-    def _is_punctuation(self, char: str) -> bool:
-        """Check if string is punctuation or whitespace."""
-        punctuation = set("，。！？、；：""''（）【】《》…—·,.!?;:\"'()[]<>-_ \n\t\r")
-        return all(c in punctuation for c in char)
-    
     def _calculate_comprehension(
         self, 
         tokens: List[Dict], 
@@ -159,29 +129,43 @@ class ContentRecommender:
         """
         Calculate token-level comprehension.
         
+        Tokens are pre-tokenized by backend: [{"wordId": "...", "hanzi": "..."}, ...]
+        
         Returns:
         - comprehension: float (0.0 - 1.0)
         - unknown_words: list of unique unknown words (as dicts)
         - unknown_count: total unique unknown words
         """
+        # Handle both dict and object formats
+        def get_word_id(t):
+            if isinstance(t, dict):
+                return t.get("wordId")
+            return getattr(t, "wordId", None)
+        
+        def get_hanzi(t):
+            if isinstance(t, dict):
+                return t.get("hanzi", "")
+            return getattr(t, "hanzi", "")
+        
         # Only count curriculum tokens (those with wordId)
-        curriculum_tokens = [t for t in tokens if t["wordId"] is not None]
+        curriculum_tokens = [t for t in tokens if get_word_id(t) is not None]
         
         if not curriculum_tokens:
             return 1.0, [], 0
         
-        known_count = sum(1 for t in curriculum_tokens if t["wordId"] in known_word_ids)
+        known_count = sum(1 for t in curriculum_tokens if get_word_id(t) in known_word_ids)
         comprehension = known_count / len(curriculum_tokens)
         
         # Get unique unknown words
         unknown_ids = set()
         unknown_words = []
         for t in curriculum_tokens:
-            if t["wordId"] not in known_word_ids and t["wordId"] not in unknown_ids:
-                unknown_ids.add(t["wordId"])
+            word_id = get_word_id(t)
+            if word_id not in known_word_ids and word_id not in unknown_ids:
+                unknown_ids.add(word_id)
                 unknown_words.append({
-                    "wordId": t["wordId"],
-                    "hanzi": t["hanzi"]
+                    "wordId": word_id,
+                    "hanzi": get_hanzi(t)
                 })
         
         return comprehension, unknown_words, len(unknown_words)

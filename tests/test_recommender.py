@@ -15,7 +15,7 @@ from app.models import TierName, TIER_CONFIG
 
 @pytest.fixture
 def sample_content_data():
-    """Sample content data for testing"""
+    """Sample content data for testing (pre-tokenized by backend)"""
     return {
         "version": "test-v1",
         "exportedAt": "2025-11-26T10:00:00Z",
@@ -46,13 +46,20 @@ def sample_content_data():
             "lesson-4": ["v8", "v9"],
             "lesson-5": ["v10"],
         },
+        # Stories are PRE-TOKENIZED (backend does segmentation)
         "stories": [
             {
                 "id": "story-1",
                 "title": "简单问候",
                 "hskLevel": 1,
                 "difficulty": "easy",
-                "fullText": "你好！我是学生。",
+                "tokens": [
+                    {"wordId": "v3", "hanzi": "你好"},
+                    {"wordId": "v4", "hanzi": "我"},
+                    {"wordId": "v5", "hanzi": "是"},
+                    {"wordId": "v6", "hanzi": "学生"},
+                ],
+                "totalTokens": 4,
                 "sentenceCount": 2,
             },
             {
@@ -60,7 +67,18 @@ def sample_content_data():
                 "title": "去北京",
                 "hskLevel": 2,
                 "difficulty": "medium",
-                "fullText": "我是学生。我去北京。北京是中国的。",
+                "tokens": [
+                    {"wordId": "v4", "hanzi": "我"},
+                    {"wordId": "v5", "hanzi": "是"},
+                    {"wordId": "v6", "hanzi": "学生"},
+                    {"wordId": "v4", "hanzi": "我"},
+                    {"wordId": None, "hanzi": "去"},  # Not in curriculum
+                    {"wordId": "v9", "hanzi": "北京"},
+                    {"wordId": "v9", "hanzi": "北京"},
+                    {"wordId": "v5", "hanzi": "是"},
+                    {"wordId": "v8", "hanzi": "中国"},
+                ],
+                "totalTokens": 9,
                 "sentenceCount": 3,
             },
             {
@@ -68,7 +86,19 @@ def sample_content_data():
                 "title": "旅行故事",
                 "hskLevel": 3,
                 "difficulty": "hard",
-                "fullText": "我去旅行。我去北京旅行。北京很好。",
+                "tokens": [
+                    {"wordId": "v4", "hanzi": "我"},
+                    {"wordId": None, "hanzi": "去"},
+                    {"wordId": "v10", "hanzi": "旅行"},
+                    {"wordId": "v4", "hanzi": "我"},
+                    {"wordId": None, "hanzi": "去"},
+                    {"wordId": "v9", "hanzi": "北京"},
+                    {"wordId": "v10", "hanzi": "旅行"},
+                    {"wordId": "v9", "hanzi": "北京"},
+                    {"wordId": None, "hanzi": "很"},
+                    {"wordId": "v2", "hanzi": "好"},
+                ],
+                "totalTokens": 10,
                 "sentenceCount": 3,
             },
         ],
@@ -120,12 +150,6 @@ class TestRecommenderSetup:
         # Lesson 5 should have all 10 words
         assert len(rec.cumulative_words["lesson-5"]) == 10
     
-    def test_jieba_seeded_with_vocab(self, recommender_with_data):
-        """Test jieba is seeded with vocabulary words"""
-        import jieba
-        
-        # Multi-char words should be in jieba dict
-        assert "你好" in jieba.dt.FREQ or len(list(jieba.cut("你好"))) == 1
     
     def test_get_info(self, recommender_with_data):
         """Test get_info returns correct structure"""
@@ -147,11 +171,16 @@ class TestComprehensionCalculation:
         """Test comprehension with all known words"""
         rec = recommender_with_data
         
-        # At lesson-3, user knows words from lessons 1-3
-        known = rec.get_known_words_for_lesson("lesson-3")
+        # At lesson-2, user knows v1-v6 (lessons 1-2)
+        known = rec.get_known_words_for_lesson("lesson-2")
         
-        # Tokenize "你好我是学生" - all should be known
-        tokens = rec._tokenize_content("你好我是学生")
+        # Story-1 tokens: v3, v4, v5, v6 - all should be known
+        tokens = [
+            {"wordId": "v3", "hanzi": "你好"},
+            {"wordId": "v4", "hanzi": "我"},
+            {"wordId": "v5", "hanzi": "是"},
+            {"wordId": "v6", "hanzi": "学生"},
+        ]
         comp, unknown, count = rec._calculate_comprehension(tokens, known)
         
         # Should be 100% comprehension
@@ -162,23 +191,43 @@ class TestComprehensionCalculation:
         """Test comprehension with some unknown words"""
         rec = recommender_with_data
         
-        # At lesson-2, user doesn't know 老师 (lesson-3)
+        # At lesson-2, user doesn't know v7 (老师, lesson-3)
         known = rec.get_known_words_for_lesson("lesson-2")
         
-        tokens = rec._tokenize_content("我是老师")
+        tokens = [
+            {"wordId": "v4", "hanzi": "我"},
+            {"wordId": "v5", "hanzi": "是"},
+            {"wordId": "v7", "hanzi": "老师"},
+        ]
         comp, unknown, count = rec._calculate_comprehension(tokens, known)
         
-        # 老师 is unknown
+        # 老师 is unknown - 2/3 known = 66.7%
         assert comp < 1.0
-        assert count >= 1
+        assert count == 1
     
-    def test_empty_text(self, recommender_with_data):
-        """Test comprehension with empty text"""
+    def test_empty_tokens(self, recommender_with_data):
+        """Test comprehension with empty token list"""
         rec = recommender_with_data
         known = rec.get_known_words_for_lesson("lesson-1")
         
         comp, unknown, count = rec._calculate_comprehension([], known)
         
+        assert comp == 1.0
+        assert count == 0
+    
+    def test_tokens_with_null_word_ids(self, recommender_with_data):
+        """Test that tokens without wordId are excluded from calculation"""
+        rec = recommender_with_data
+        known = rec.get_known_words_for_lesson("lesson-2")
+        
+        tokens = [
+            {"wordId": "v4", "hanzi": "我"},
+            {"wordId": None, "hanzi": "去"},  # Not in curriculum
+            {"wordId": "v5", "hanzi": "是"},
+        ]
+        comp, unknown, count = rec._calculate_comprehension(tokens, known)
+        
+        # Only v4 and v5 counted (both known) - 2/2 = 100%
         assert comp == 1.0
         assert count == 0
 
@@ -318,14 +367,4 @@ class TestEdgeCases:
         # Should return empty tiers
         for tier in result.tiers.values():
             assert len(tier.items) == 0
-    
-    def test_punctuation_filtering(self, recommender_with_data):
-        """Test punctuation is filtered from tokens"""
-        rec = recommender_with_data
-        
-        tokens = rec._tokenize_content("你好！我是学生。")
-        
-        # Should not include punctuation
-        for token in tokens:
-            assert token["hanzi"] not in "！。，？"
 
