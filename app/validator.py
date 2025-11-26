@@ -180,6 +180,102 @@ class VocabValidator:
                 "safe_percentage": round(len(safe) / len(words) * 100, 1) if words else 0
             }
         }
+
+    def validate_lesson(
+        self,
+        text: str,
+        lesson_number: int,
+        focus_words: list[str],
+        hsk_level: int = 1
+    ) -> dict:
+        """
+        Validate lesson text for strict i+1 compliance.
+        
+        A word is VALID if:
+        1. It's in focus_words (the new vocabulary being taught)
+        2. It's in always_safe (common particles, pronouns)
+        3. It's in curriculum with lesson_id <= lesson_number
+        
+        Returns:
+        - valid: True if all words pass
+        - invalid_words: List of words that fail + their lesson IDs
+        - focus_words_found: Focus words that appeared in text
+        - focus_words_missing: Focus words NOT in text
+        - unknown_words: Words not in curriculum
+        - suggestion: Feedback for AI retry
+        """
+        focus_set = set(focus_words)
+        
+        # Segment text using jieba
+        words = list(jieba.cut(text))
+        words = [w for w in words if w.strip() and not self._is_punctuation(w)]
+        
+        invalid_words = []
+        unknown_words = []
+        focus_found = set()
+        
+        for word in words:
+            # Check if it's a focus word (i+1)
+            if word in focus_set:
+                focus_found.add(word)
+                continue
+            
+            # Check if always safe
+            if word in self.always_safe:
+                continue
+            
+            # Check curriculum
+            if word not in self.curriculum:
+                unknown_words.append(word)
+                continue
+            
+            # Get word's lesson position
+            word_pos = self.curriculum[word]
+            word_hsk, word_lesson = self._parse_position(word_pos)
+            
+            # Calculate absolute lesson ID
+            # HSK1 lessons 1-10 = IDs 1-10
+            # HSK2 lessons 1-10 = IDs 11-20
+            # etc.
+            word_absolute_lesson = (word_hsk - 1) * 10 + word_lesson
+            current_absolute_lesson = (hsk_level - 1) * 10 + lesson_number
+            
+            # Word must be from this lesson or earlier
+            if word_absolute_lesson > current_absolute_lesson:
+                invalid_words.append({
+                    "word": word,
+                    "lesson_id": word_absolute_lesson,
+                    "reason": f"Word from lesson {word_absolute_lesson}, but current is {current_absolute_lesson}"
+                })
+        
+        # Check which focus words are missing
+        focus_missing = list(focus_set - focus_found)
+        
+        # Build response
+        is_valid = len(invalid_words) == 0
+        
+        suggestion = None
+        if not is_valid:
+            bad_words = [w["word"] for w in invalid_words]
+            suggestion = f"Replace these words with simpler alternatives: {', '.join(bad_words)}"
+        elif focus_missing:
+            suggestion = f"The text is missing these focus words: {', '.join(focus_missing)}"
+        
+        return {
+            "valid": is_valid and len(focus_missing) == 0,
+            "invalid_words": invalid_words,
+            "focus_words_found": list(focus_found),
+            "focus_words_missing": focus_missing,
+            "unknown_words": list(set(unknown_words)),
+            "suggestion": suggestion,
+            "stats": {
+                "total_words": len(words),
+                "unique_words": len(set(words)),
+                "invalid_count": len(invalid_words),
+                "unknown_count": len(set(unknown_words)),
+                "focus_coverage": f"{len(focus_found)}/{len(focus_words)}"
+            }
+        }
     
     def _is_punctuation(self, char: str) -> bool:
         """Check if string is punctuation"""

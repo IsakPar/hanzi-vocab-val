@@ -235,3 +235,283 @@ class TestEdgeCases:
         assert result["valid"] is True
         assert len(result["forbidden_words"]) == 0
 
+
+# ═══════════════════════════════════════════════════════════
+# i+1 LESSON VALIDATION TESTS
+# ═══════════════════════════════════════════════════════════
+
+class TestValidateLessonBasic:
+    """Basic tests for i+1 lesson validation"""
+    
+    def test_valid_text_with_focus_words(self, validator):
+        """Text with only known words and focus words should pass"""
+        result = validator.validate_lesson(
+            text="你好！学习很好！",  # 你好=L1, 学习=L3 (focus)
+            lesson_number=3,
+            focus_words=["学习"],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+        assert "学习" in result["focus_words_found"]
+        assert len(result["invalid_words"]) == 0
+    
+    def test_invalid_word_from_later_lesson(self, validator):
+        """Words from later lessons should fail"""
+        result = validator.validate_lesson(
+            text="你好可能",  # 可能 is HSK2 L1 (lesson 11)
+            lesson_number=3,  # HSK1 L3 (lesson 3)
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert len(result["invalid_words"]) > 0
+        # Check that 可能 is in invalid words
+        invalid_word_names = [w["word"] for w in result["invalid_words"]]
+        assert "可能" in invalid_word_names
+    
+    def test_focus_word_exempts_from_lesson_check(self, validator):
+        """Focus words should be allowed even if from later"""
+        result = validator.validate_lesson(
+            text="你好可能",  # 可能 is HSK2 L1
+            lesson_number=3,
+            focus_words=["可能"],  # Explicitly allowed as focus
+            hsk_level=1
+        )
+        assert result["valid"] is True
+        assert "可能" in result["focus_words_found"]
+    
+    def test_missing_focus_words_fails(self, validator):
+        """Text without all focus words should fail"""
+        result = validator.validate_lesson(
+            text="你好",  # Missing 学习
+            lesson_number=3,
+            focus_words=["学习"],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert "学习" in result["focus_words_missing"]
+        assert result["suggestion"] is not None
+
+
+class TestValidateLessonAbsolutePosition:
+    """Tests for absolute lesson position calculation"""
+    
+    def test_hsk1_lesson_1(self, validator):
+        """HSK1 L1 = absolute lesson 1"""
+        result = validator.validate_lesson(
+            text="你好",  # HSK1 L1
+            lesson_number=1,
+            focus_words=["你好"],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+    
+    def test_hsk1_lesson_3(self, validator):
+        """HSK1 L3 = absolute lesson 3, L1-L2 words should be safe"""
+        result = validator.validate_lesson(
+            text="你好吃喝",  # L1: 你好, L2: 吃,喝
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+    
+    def test_hsk2_can_use_all_hsk1(self, validator):
+        """HSK2 L1 = absolute lesson 11, all HSK1 should be safe"""
+        result = validator.validate_lesson(
+            text="你好学习工作",  # All from HSK1
+            lesson_number=1,
+            focus_words=[],
+            hsk_level=2
+        )
+        assert result["valid"] is True
+    
+    def test_hsk2_lesson_2_allows_hsk2_lesson_1(self, validator):
+        """HSK2 L2 should allow HSK2 L1 words"""
+        result = validator.validate_lesson(
+            text="可能应该",  # HSK2 L1 words
+            lesson_number=2,
+            focus_words=[],
+            hsk_level=2
+        )
+        assert result["valid"] is True
+
+
+class TestValidateLessonFocusWords:
+    """Tests for focus word handling"""
+    
+    def test_all_focus_words_found(self, validator):
+        """Should track which focus words are found"""
+        result = validator.validate_lesson(
+            text="你好学习工作",
+            lesson_number=3,
+            focus_words=["学习", "工作"],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+        assert "学习" in result["focus_words_found"]
+        assert "工作" in result["focus_words_found"]
+        assert len(result["focus_words_missing"]) == 0
+    
+    def test_partial_focus_words(self, validator):
+        """Should identify missing focus words"""
+        result = validator.validate_lesson(
+            text="你好学习",  # Missing 工作
+            lesson_number=3,
+            focus_words=["学习", "工作"],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert "学习" in result["focus_words_found"]
+        assert "工作" in result["focus_words_missing"]
+    
+    def test_no_focus_words_required(self, validator):
+        """Should pass if no focus words specified"""
+        result = validator.validate_lesson(
+            text="你好",
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+
+
+class TestValidateLessonAlwaysSafe:
+    """Tests for always-safe words"""
+    
+    def test_pronouns_always_safe(self, validator):
+        """Pronouns should be allowed at any level"""
+        result = validator.validate_lesson(
+            text="我你他她它",  # All pronouns
+            lesson_number=1,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+    
+    def test_particles_always_safe(self, validator):
+        """Particles should be allowed"""
+        result = validator.validate_lesson(
+            text="是的吗呢了",
+            lesson_number=1,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+
+
+class TestValidateLessonUnknownWords:
+    """Tests for unknown word handling"""
+    
+    def test_unknown_words_tracked(self, validator):
+        """Words not in curriculum should be tracked"""
+        result = validator.validate_lesson(
+            text="你好披萨",  # 披萨 not in curriculum
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert "披萨" in result["unknown_words"]
+    
+    def test_unknown_words_dont_fail(self, validator):
+        """Unknown words shouldn't cause failure (might be valid Chinese)"""
+        result = validator.validate_lesson(
+            text="你好",
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+
+
+class TestValidateLessonSuggestions:
+    """Tests for suggestion generation"""
+    
+    def test_suggestion_for_invalid_words(self, validator):
+        """Should provide suggestion when words are too advanced"""
+        result = validator.validate_lesson(
+            text="你好可能虽然",  # 可能, 虽然 are HSK2
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert result["suggestion"] is not None
+        assert "可能" in result["suggestion"] or "虽然" in result["suggestion"]
+    
+    def test_suggestion_for_missing_focus(self, validator):
+        """Should suggest adding missing focus words"""
+        result = validator.validate_lesson(
+            text="你好",
+            lesson_number=3,
+            focus_words=["学习"],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert "学习" in result["suggestion"]
+
+
+class TestValidateLessonStats:
+    """Tests for statistics calculation"""
+    
+    def test_stats_returned(self, validator):
+        """Should return word statistics"""
+        result = validator.validate_lesson(
+            text="你好你好学习",  # Repeated 你好
+            lesson_number=3,
+            focus_words=["学习"],
+            hsk_level=1
+        )
+        assert "stats" in result
+        assert result["stats"]["total_words"] >= 2
+        assert result["stats"]["unique_words"] >= 2
+        assert result["stats"]["focus_coverage"] == "1/1"
+    
+    def test_focus_coverage_format(self, validator):
+        """Focus coverage should be 'found/total' format"""
+        result = validator.validate_lesson(
+            text="你好学习",
+            lesson_number=3,
+            focus_words=["学习", "工作"],
+            hsk_level=1
+        )
+        assert result["stats"]["focus_coverage"] == "1/2"
+
+
+class TestValidateLessonEdgeCases:
+    """Edge cases for lesson validation"""
+    
+    def test_empty_text(self, validator):
+        """Empty text should fail if focus words required"""
+        result = validator.validate_lesson(
+            text="",
+            lesson_number=3,
+            focus_words=["学习"],
+            hsk_level=1
+        )
+        assert result["valid"] is False
+        assert "学习" in result["focus_words_missing"]
+    
+    def test_empty_text_no_focus(self, validator):
+        """Empty text with no focus words should pass"""
+        result = validator.validate_lesson(
+            text="",
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+    
+    def test_punctuation_ignored(self, validator):
+        """Punctuation should not be counted"""
+        result = validator.validate_lesson(
+            text="你好！！！",
+            lesson_number=3,
+            focus_words=[],
+            hsk_level=1
+        )
+        assert result["valid"] is True
+        # Punctuation shouldn't be in any list
+        for word in result.get("invalid_words", []):
+            assert word["word"] != "！"
+

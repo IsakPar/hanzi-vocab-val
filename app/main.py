@@ -189,6 +189,36 @@ class ValidateResponse(BaseModel):
     stats: dict
 
 
+# ═══════════════════════════════════════════════════════════
+# i+1 Lesson Validation Models
+# ═══════════════════════════════════════════════════════════
+
+class ValidateLessonRequest(BaseModel):
+    """Request for i+1 lesson validation"""
+    text: str  # The Chinese lesson text
+    lesson_number: int  # Current lesson number (1-based)
+    focus_words: list[str]  # New words being taught (i+1)
+    hsk_level: int = 1  # HSK level (default 1)
+
+
+class InvalidWord(BaseModel):
+    """Details about a word that violates i+1"""
+    word: str
+    lesson_id: int  # The lesson this word belongs to
+    reason: str  # Why it's invalid
+
+
+class ValidateLessonResponse(BaseModel):
+    """Response for i+1 lesson validation"""
+    valid: bool
+    invalid_words: list[InvalidWord] = []
+    focus_words_found: list[str] = []  # Which focus words appeared
+    focus_words_missing: list[str] = []  # Focus words not in text
+    unknown_words: list[str] = []  # Words not in curriculum
+    suggestion: Optional[str] = None  # AI feedback for retry
+    stats: dict = {}
+
+
 class SyncResponse(BaseModel):
     success: bool
     version: str
@@ -249,6 +279,42 @@ async def validate_text(request: ValidateRequest):
         return ValidateResponse(**result)
     except Exception as e:
         logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# i+1 Lesson Validation Endpoint
+# ═══════════════════════════════════════════════════════════
+
+@app.post("/validate-lesson", response_model=ValidateLessonResponse)
+async def validate_lesson(request: ValidateLessonRequest):
+    """
+    Validate lesson text for strict i+1 compliance.
+    
+    Rules:
+    - ALL words must have lesson_id ≤ current lesson number
+    - EXCEPT focus_words (the new i+1 vocabulary)
+    - Unknown words (not in curriculum) are flagged
+    
+    This ensures students only see known vocabulary plus
+    the specific new words being taught.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        result = validator.validate_lesson(
+            text=request.text,
+            lesson_number=request.lesson_number,
+            focus_words=request.focus_words,
+            hsk_level=request.hsk_level
+        )
+        return ValidateLessonResponse(**result)
+    except Exception as e:
+        logger.error(f"Lesson validation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
