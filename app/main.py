@@ -20,7 +20,12 @@ from dotenv import load_dotenv
 from .validator import VocabValidator
 from .sync import CurriculumSync
 from .recommender import ContentRecommender
-from .models import RecommendRequest, RecommendResponse
+from .models import (
+    RecommendRequest, RecommendResponse,
+    ValidateReadingRequest, ValidateReadingResponse,
+    ValidateStructureRequest, ValidateStructureResponse,
+    ValidatePedagogyRequest, ValidatePedagogyResponse
+)
 
 load_dotenv()
 
@@ -317,6 +322,107 @@ async def validate_lesson(request: ValidateLessonRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════
+# AI Tutor Lesson Validation Endpoints (Enhanced)
+# ═══════════════════════════════════════════════════════════
+
+@app.post("/validate/reading", response_model=ValidateReadingResponse)
+async def validate_reading_structured(request: ValidateReadingRequest):
+    """
+    Validate reading content with structured feedback for AI retry.
+    
+    Returns detailed analysis including:
+    - Unknown word ratio
+    - Specific problem words
+    - Suggestions for retry prompt (ban_tokens, require_tokens)
+    
+    This is used by the AI Tutor lesson generator to validate
+    reading content before generating practice exercises.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        result = validator.validate_reading_structured(
+            chinese_text=request.reading.chinese,
+            user_lesson_position=request.user_lesson_position,
+            hsk_level=request.hsk_level,
+            focus_words=request.focus_words,
+            allowed_words=request.allowed_words if request.allowed_words else None
+        )
+        return ValidateReadingResponse(**result)
+    except Exception as e:
+        logger.error(f"Reading validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/validate/structure", response_model=ValidateStructureResponse)
+async def validate_structure(request: ValidateStructureRequest):
+    """
+    Validate exercise JSON structure and word usage.
+    
+    Checks:
+    - JSON schema validity
+    - Unique IDs
+    - All Chinese words in allowed_words
+    - No illegal characters
+    - Length constraints
+    
+    Returns which exercises can be fixed vs must be regenerated.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        result = validator.validate_exercise_structure(
+            exercises=request.exercises,
+            allowed_words=request.allowed_words
+        )
+        return ValidateStructureResponse(**result)
+    except Exception as e:
+        logger.error(f"Structure validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/validate/pedagogy", response_model=ValidatePedagogyResponse)
+async def validate_pedagogy(request: ValidatePedagogyRequest):
+    """
+    Validate all content for pedagogical soundness (i+1 compliance).
+    
+    Checks:
+    - Unknown word density per exercise (max 30%)
+    - Unknown word density for reading (max 25%)
+    - Focus word coverage (all focus words tested)
+    - No grammar beyond user's level
+    
+    Returns per-item results and overall coverage analysis.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        result = validator.validate_pedagogy(
+            reading_chinese=request.reading.chinese,
+            exercises=request.exercises,
+            user_lesson_position=request.user_lesson_position,
+            hsk_level=request.hsk_level,
+            focus_words=request.focus_words
+        )
+        return ValidatePedagogyResponse(**result)
+    except Exception as e:
+        logger.error(f"Pedagogy validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/sync", response_model=SyncResponse, dependencies=[Depends(verify_api_key)])
 async def sync_curriculum():
     """
@@ -381,6 +487,57 @@ async def recommend_content(request: RecommendRequest):
         return result
     except Exception as e:
         logger.error(f"Recommendation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# GET VOCABULARY (for generation prompts)
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/get-vocabulary")
+async def get_vocabulary(max_lesson: int = 10):
+    """
+    Get all vocabulary words up to a given lesson number.
+    Used by lesson generator to know which words are allowed.
+    
+    Returns words from lesson 1 to max_lesson inclusive.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    try:
+        allowed_words = []
+        
+        for word, position in validator.curriculum.items():
+            # Parse position like "hsk1-l5" to extract lesson number
+            try:
+                # Format: "hsk{X}-l{Y}" where X is HSK level, Y is lesson in that level
+                parts = position.lower().replace("hsk", "").split("-l")
+                if len(parts) == 2:
+                    hsk_level = int(parts[0])
+                    lesson_in_hsk = int(parts[1])
+                    # Calculate absolute lesson number
+                    # HSK 1 = lessons 1-10, HSK 2 = lessons 11-20, etc.
+                    absolute_lesson = (hsk_level - 1) * 10 + lesson_in_hsk
+                    
+                    if absolute_lesson <= max_lesson:
+                        allowed_words.append(word)
+            except (ValueError, IndexError):
+                # If position parsing fails, skip this word
+                continue
+        
+        logger.info(f"Returning {len(allowed_words)} words for max_lesson={max_lesson}")
+        
+        return {
+            "words": allowed_words,
+            "count": len(allowed_words),
+            "max_lesson": max_lesson
+        }
+    except Exception as e:
+        logger.error(f"Get vocabulary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

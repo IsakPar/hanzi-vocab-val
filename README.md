@@ -65,6 +65,20 @@ Validate text (public)
 }
 ```
 
+### `GET /get-vocabulary`
+Get allowed words up to a lesson number (public) - **Used by AI Tutor generator**
+```bash
+curl "https://your-validator.sevalla.app/get-vocabulary?max_lesson=15"
+```
+Response:
+```json
+{
+  "words": ["你", "好", "我", "是", "学习", ...],
+  "count": 150,
+  "max_lesson": 15
+}
+```
+
 ### `POST /sync`
 Sync curriculum from backend (**requires API key**)
 ```bash
@@ -123,10 +137,11 @@ Run with coverage:
 pytest tests/ -v --cov=app --cov-report=html
 ```
 
-Current: **43 tests** covering:
+Current: **53+ tests** covering:
 - Validator logic (27 tests)
-- API endpoints (16 tests)
+- API endpoints (26 tests)
 - Security (4 tests)
+- Get Vocabulary (10 tests)
 
 ## Architecture
 

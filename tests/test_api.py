@@ -412,6 +412,96 @@ class TestValidateLessonRequestValidation:
         assert response.status_code == 422
 
 
+# ═══════════════════════════════════════════════════════════
+# GET VOCABULARY ENDPOINT TESTS
+# ═══════════════════════════════════════════════════════════
+
+class TestGetVocabularyEndpoint:
+    """Tests for /get-vocabulary endpoint - used by AI Tutor lesson generator"""
+    
+    def test_get_vocabulary_returns_200(self, client):
+        """Should return 200 with vocabulary list"""
+        response = client.get("/get-vocabulary?max_lesson=3")
+        assert response.status_code == 200
+    
+    def test_get_vocabulary_returns_words(self, client):
+        """Should return words list with count"""
+        response = client.get("/get-vocabulary?max_lesson=3")
+        data = response.json()
+        assert "words" in data
+        assert "count" in data
+        assert "max_lesson" in data
+        assert isinstance(data["words"], list)
+        assert data["count"] == len(data["words"])
+    
+    def test_get_vocabulary_respects_max_lesson(self, client):
+        """Should only return words up to max_lesson"""
+        # Get words for lesson 1 (HSK1 L1 only)
+        response1 = client.get("/get-vocabulary?max_lesson=1")
+        data1 = response1.json()
+        
+        # Get words for lesson 3 (HSK1 L1-3)
+        response3 = client.get("/get-vocabulary?max_lesson=3")
+        data3 = response3.json()
+        
+        # Lesson 3 should have more words than lesson 1
+        assert data3["count"] >= data1["count"]
+        
+        # Lesson 1 words should be subset of lesson 3 words
+        for word in data1["words"]:
+            assert word in data3["words"]
+    
+    def test_get_vocabulary_includes_basic_words(self, client):
+        """Should include basic HSK1 L1 words"""
+        response = client.get("/get-vocabulary?max_lesson=3")
+        data = response.json()
+        
+        # These are HSK1 L1 words in our test curriculum
+        basic_words = ["你", "好", "我", "是", "谢谢"]
+        for word in basic_words:
+            assert word in data["words"], f"{word} should be in vocabulary"
+    
+    def test_get_vocabulary_excludes_advanced_words(self, client):
+        """Should NOT include words from later lessons"""
+        response = client.get("/get-vocabulary?max_lesson=3")
+        data = response.json()
+        
+        # These are HSK2+ words - should NOT be included for max_lesson=3
+        advanced_words = ["可能", "应该", "虽然", "但是"]
+        for word in advanced_words:
+            assert word not in data["words"], f"{word} should NOT be in vocabulary for lesson 3"
+    
+    def test_get_vocabulary_default_max_lesson(self, client):
+        """Should use default max_lesson=10 if not specified"""
+        response = client.get("/get-vocabulary")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["max_lesson"] == 10
+    
+    def test_get_vocabulary_handles_high_lesson_number(self, client):
+        """Should handle lesson numbers beyond curriculum"""
+        response = client.get("/get-vocabulary?max_lesson=100")
+        assert response.status_code == 200
+        data = response.json()
+        # Should return all available words
+        assert data["count"] >= 0
+    
+    def test_get_vocabulary_handles_zero_lesson(self, client):
+        """Should handle lesson 0 gracefully"""
+        response = client.get("/get-vocabulary?max_lesson=0")
+        assert response.status_code == 200
+        data = response.json()
+        # Should return empty or minimal set
+        assert isinstance(data["words"], list)
+    
+    def test_get_vocabulary_handles_negative_lesson(self, client):
+        """Should handle negative lesson number"""
+        response = client.get("/get-vocabulary?max_lesson=-1")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data["words"], list)
+
+
 class TestValidateLessonIntegration:
     """Integration tests for the i+1 workflow"""
     
