@@ -34,6 +34,49 @@ class VocabValidator:
             "个", "些", "点", "下", "上", "里", "外",
         }
     
+    def _split_for_learning(self, words: list[str]) -> list[str]:
+        """
+        Post-process jieba output to split words for language learning.
+        
+        Example: "我要" → ["我", "要"] if both are in curriculum or always_safe
+        
+        This helps learners recognize individual vocabulary items rather than
+        treating common phrases as single units.
+        """
+        result = []
+        all_known = self.curriculum.keys() | self.always_safe
+        
+        for word in words:
+            if len(word) <= 1:
+                # Single character, keep as-is
+                result.append(word)
+            elif word in all_known:
+                # Word is in curriculum as a unit (e.g., "中国", "学生"), keep it
+                result.append(word)
+            else:
+                # Try to split into known parts
+                # First try: split into individual characters if all are known
+                chars = list(word)
+                if all(c in all_known for c in chars):
+                    result.extend(chars)
+                else:
+                    # Second try: split into 2-char + rest, or 1-char + rest
+                    split_found = False
+                    for i in range(1, len(word)):
+                        left = word[:i]
+                        right = word[i:]
+                        if left in all_known and right in all_known:
+                            result.append(left)
+                            result.append(right)
+                            split_found = True
+                            break
+                    
+                    if not split_found:
+                        # Can't split meaningfully, keep original
+                        result.append(word)
+        
+        return result
+    
     def load(self):
         """Load curriculum from local cache"""
         curriculum_path = os.path.join(self.data_dir, "curriculum.json")
@@ -136,6 +179,9 @@ class VocabValidator:
         
         # Filter out punctuation and whitespace
         words = [w for w in words if w.strip() and not self._is_punctuation(w)]
+        
+        # Post-process: split words for learning (e.g., "我要" → ["我", "要"])
+        words = self._split_for_learning(words)
         
         # Categorize words
         safe = []
@@ -477,9 +523,11 @@ class VocabValidator:
         }
 
     def _extract_chinese_words(self, text: str) -> list[str]:
-        """Extract Chinese words from text"""
+        """Extract Chinese words from text, split for learning"""
         words = list(jieba.cut(text))
-        return [w for w in words if w.strip() and not self._is_punctuation(w)]
+        words = [w for w in words if w.strip() and not self._is_punctuation(w)]
+        # Post-process: split words for learning (e.g., "我要" → ["我", "要"])
+        return self._split_for_learning(words)
 
     def _check_words_allowed(
         self,
