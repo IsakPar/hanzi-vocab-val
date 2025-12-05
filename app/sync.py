@@ -104,15 +104,28 @@ class CurriculumSync:
     )
     async def fetch_curriculum(self) -> dict:
         """
-        Fetch simple curriculum from backend (for validator).
+        Fetch curriculum from backend (for validator).
+        First tries vocab-export (all vocabulary), falls back to export (lesson-derived).
         Retries up to 3 times on network errors.
         """
         async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Try vocab-export first (all vocabulary)
             response = await client.get(
-                f"{self.backend_url}/v1/curriculum/export"
+                f"{self.backend_url}/v1/curriculum/vocab-export"
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            # If vocab-export is empty, try the lesson-derived export
+            if data.get("wordCount", 0) == 0:
+                logger.info("vocab-export empty, trying lesson-derived export")
+                response = await client.get(
+                    f"{self.backend_url}/v1/curriculum/export"
+                )
+                response.raise_for_status()
+                data = response.json()
+            
+            return data
     
     @retry(
         stop=stop_after_attempt(3),

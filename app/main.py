@@ -42,9 +42,11 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 ALLOWED_ORIGINS = [
     BACKEND_URL,
     "https://hanzimaster-backend-v2.isak-parild.workers.dev",
-    # Portal URLs
+    # Portal URLs (including all deployment variants)
     "https://hanzimaster-portal.pages.dev",
     "https://hanzimaster-portal-v2.pages.dev",
+    "https://hanzimaster-studio.pages.dev",  # Production studio URL
+    # Cloudflare preview deployments (wildcard would be better but FastAPI doesn't support it well)
     # Localhost for development
     "http://localhost:3000",
     "http://localhost:5173",
