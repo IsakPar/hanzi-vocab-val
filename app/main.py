@@ -542,6 +542,87 @@ async def get_vocabulary(max_lesson: int = 10):
 
 
 # ═══════════════════════════════════════════════════════════
+# SEGMENTATION (for Portal health check)
+# ═══════════════════════════════════════════════════════════
+
+class SegmentRequest(BaseModel):
+    """Request to segment Chinese text into words"""
+    texts: list[str]  # Multiple Chinese texts to segment
+
+
+class SegmentedText(BaseModel):
+    """Single segmented text result"""
+    text: str
+    words: list[str]
+
+
+class SegmentResponse(BaseModel):
+    """Response with segmented words"""
+    segments: list[SegmentedText]
+    all_words: list[str]  # Deduplicated list of all words
+    words_filtered: list[str]  # After removing always_safe words
+    always_safe_removed: list[str]  # Which words were filtered out
+    curriculum_words: list[str]  # Words that exist in curriculum
+    unknown_words: list[str]  # Words NOT in curriculum (candidates for adding)
+
+
+@app.post("/segment", response_model=SegmentResponse)
+async def segment_text(request: SegmentRequest):
+    """
+    Segment Chinese text into individual words using jieba.
+    
+    Used by Portal health check to:
+    1. Break sentences like "我是中国人" into ["我", "是", "中国", "人"]
+    2. Filter out always_safe words (我, 你, 是, 的, etc.)
+    3. Identify which words exist in curriculum vs unknown
+    
+    This allows health check to flag only ACTUAL missing vocabulary,
+    not entire sentences.
+    """
+    if not validator.loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Curriculum not loaded. POST /sync to initialize."
+        )
+    
+    all_words = set()
+    always_safe_removed = set()
+    segments = []
+    
+    for text in request.texts:
+        # Use validator's extraction method (includes jieba + punctuation filtering)
+        words = validator._extract_chinese_words(text)
+        segments.append(SegmentedText(text=text, words=words))
+        all_words.update(words)
+    
+    # Separate always_safe from others
+    words_filtered = []
+    for word in all_words:
+        if word in validator.always_safe:
+            always_safe_removed.add(word)
+        else:
+            words_filtered.append(word)
+    
+    # Check which words are in curriculum
+    curriculum_words = []
+    unknown_words = []
+    for word in words_filtered:
+        if word in validator.curriculum:
+            curriculum_words.append(word)
+        else:
+            unknown_words.append(word)
+    
+    return SegmentResponse(
+        segments=segments,
+        all_words=list(all_words),
+        words_filtered=words_filtered,
+        always_safe_removed=list(always_safe_removed),
+        curriculum_words=curriculum_words,
+        unknown_words=unknown_words
+    )
+
+
+# ═══════════════════════════════════════════════════════════
 # TEST SEEDING (for pipeline testing)
 # ═══════════════════════════════════════════════════════════
 
