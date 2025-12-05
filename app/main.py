@@ -46,7 +46,9 @@ ALLOWED_ORIGINS = [
     "https://hanzimaster-portal.pages.dev",
     "https://hanzimaster-portal-v2.pages.dev",
     "https://hanzimaster-studio.pages.dev",  # Production studio URL
-    # Cloudflare preview deployments (wildcard would be better but FastAPI doesn't support it well)
+    # Custom domains
+    "https://studio.polymasterlabs.com",  # Custom domain for portal
+    "https://api.studio.polymasterlabs.com",  # Custom domain for backend
     # Localhost for development
     "http://localhost:3000",
     "http://localhost:5173",
